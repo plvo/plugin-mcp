@@ -5,7 +5,7 @@ import type {
   McpResourceInfo,
   McpServer,
   McpToolInfo,
-} from "../types";
+} from "@/types";
 
 export async function createMcpMemory(
   runtime: IAgentRuntime,

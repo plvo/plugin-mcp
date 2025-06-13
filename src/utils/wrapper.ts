@@ -5,10 +5,10 @@ import {
   type Memory,
   type IAgentRuntime,
   type State,
-  logger,
   ModelType,
 } from "@elizaos/core";
 import { DEFAULT_MAX_RETRIES, type ValidationResult } from "../types";
+import { mcpLogger } from "./mcp-logger";
 
 export type Input = string | object;
 
@@ -54,11 +54,11 @@ export async function withModelRetry<T>({
   const maxRetries = getMaxRetries(runtime);
 
   try {
-    logger.info(`[WITH-MODEL-RETRY] Raw selection input:\n${input}`);
+    mcpLogger.info(`[WITH-MODEL-RETRY] Raw selection input:\n${input}`);
 
     // If it's a first retry, input is a string, so we need to parse it
     const parsedJson = typeof input === "string" ? parseJSON<string>(input) : input;
-    logger.debug(
+    mcpLogger.debug(
       `[WITH-MODEL-RETRY] Parsed selection input:\n${JSON.stringify(parsedJson, null, 2)}`
     );
 
@@ -72,10 +72,10 @@ export async function withModelRetry<T>({
   } catch (parseError) {
     const errorMessage = parseError instanceof Error ? parseError.message : "Unknown parsing error";
 
-    logger.error(`[WITH-MODEL-RETRY] Failed to parse response: ${errorMessage}`);
+    mcpLogger.error(`[WITH-MODEL-RETRY] Failed to parse response: ${errorMessage}`);
 
     if (retryCount < maxRetries) {
-      logger.debug(`[WITH-MODEL-RETRY] Retrying (attempt ${retryCount + 1}/${maxRetries})`);
+      mcpLogger.debug(`[WITH-MODEL-RETRY] Retrying (attempt ${retryCount + 1}/${maxRetries})`);
 
       const feedbackPrompt: string = createFeedbackPromptFn(
         input,
@@ -124,12 +124,12 @@ function getMaxRetries(runtime: IAgentRuntime): number {
     if (settings && "maxRetries" in settings && settings.maxRetries !== undefined) {
       const configValue = Number(settings.maxRetries);
       if (!Number.isNaN(configValue) && configValue >= 0) {
-        logger.debug(`[WITH-MODEL-RETRY] Using configured selection retries: ${configValue}`);
+        mcpLogger.debug(`[WITH-MODEL-RETRY] Using configured selection retries: ${configValue}`);
         return configValue;
       }
     }
   } catch (error) {
-    logger.debug(
+    mcpLogger.debug(
       "[WITH-MODEL-RETRY] Error reading selection retries config:",
       error instanceof Error ? error.message : String(error)
     );

@@ -1,4 +1,5 @@
-import { type IAgentRuntime, type Plugin, logger } from "@elizaos/core";
+import type { IAgentRuntime, Plugin  } from "@elizaos/core";
+import { mcpLogger } from "@/utils/mcp-logger";
 import { callToolAction } from "./actions/callToolAction";
 import { readResourceAction } from "./actions/readResourceAction";
 import { provider } from "./provider";
@@ -9,7 +10,7 @@ const mcpPlugin: Plugin = {
   description: "Plugin for connecting to MCP (Model Context Protocol) servers",
 
   init: async (_config: Record<string, string>, _runtime: IAgentRuntime) => {
-    logger.info("Initializing MCP plugin...");
+    mcpLogger.info("Initializing MCP plugin...");
   },
 
   services: [McpService],

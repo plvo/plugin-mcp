@@ -123,54 +123,6 @@ export interface McpProviderData {
   [serverName: string]: McpServerInfo;
 }
 
-export const ToolSelectionSchema = {
-  type: "object",
-  required: ["serverName", "toolName", "arguments"],
-  properties: {
-    serverName: {
-      type: "string",
-      minLength: 1,
-      errorMessage: "serverName must not be empty",
-    },
-    toolName: {
-      type: "string",
-      minLength: 1,
-      errorMessage: "toolName must not be empty",
-    },
-    arguments: {
-      type: "object",
-    },
-    reasoning: {
-      type: "string",
-    },
-    noToolAvailable: {
-      type: "boolean",
-    },
-  },
-};
-
-export const ResourceSelectionSchema = {
-  type: "object",
-  required: ["serverName", "uri"],
-  properties: {
-    serverName: {
-      type: "string",
-      minLength: 1,
-      errorMessage: "serverName must not be empty",
-    },
-    uri: {
-      type: "string",
-      minLength: 1,
-      errorMessage: "uri must not be empty",
-    },
-    reasoning: {
-      type: "string",
-    },
-    noResourceAvailable: {
-      type: "boolean",
-    },
-  },
-};
 
 export const DEFAULT_PING_CONFIG: PingConfig = {
   enabled: true,

@@ -1,17 +1,20 @@
-import type { State } from "@elizaos/core";
+import type { IAgentRuntime, Memory, State } from "@elizaos/core";
 import {
+  MCP_SERVICE_NAME,
   type McpProviderData,
   type McpServer,
-  ResourceSelectionSchema,
   type ValidationResult,
-} from "../types";
+} from "@/types";
 import { validateJsonSchema } from "./json";
 import {
+  ResourceSelectionSchema,
   toolSelectionArgumentSchema,
   toolSelectionNameSchema,
   type ToolSelectionArgument,
   type ToolSelectionName,
 } from "./schemas";
+import type { McpService } from "@/service";
+import { mcpLogger } from "./mcp-logger";
 
 export interface ToolSelection {
   serverName: string;
@@ -181,4 +184,27 @@ Available ${itemType}s:
 ${itemsDescription}
 
 User request: ${userMessage}`;
+}
+
+export function validateAction(actionName: string, runtime: IAgentRuntime, _message: Memory, _state?: State): boolean {
+  try {
+    const mcpService = runtime.getService<McpService>(MCP_SERVICE_NAME);
+    if (!mcpService) {
+      mcpLogger.warn('[VALIDATE] service not available');
+      return false;
+    }
+
+    const servers = mcpService.getServers();
+    mcpLogger.info(`[VALIDATE] [${actionName}] Found ${servers.length} servers`);
+    servers.forEach((s) => mcpLogger.debug(`\t- ${s.name} | ${s.status}`));
+    mcpLogger.trace(`[VALIDATE] [${actionName}] servers:\n${JSON.stringify(servers)}`);
+
+    const hasConnectedServersWithTools = servers.some((s) => s.status === 'connected' && s.tools && s.tools.length > 0);
+    mcpLogger.info(`[VALIDATE] [${actionName}] Connected servers with tools: "${hasConnectedServersWithTools}"`);
+
+    return servers.length > 0 && hasConnectedServersWithTools;
+  } catch (error) {
+    mcpLogger.error(`[VALIDATE] [${actionName}] Error in action validation:`, error);
+    return false;
+  }
 }

@@ -1,4 +1,5 @@
-import { type IAgentRuntime, Service, logger } from "@elizaos/core";
+import { type IAgentRuntime, Service, } from "@elizaos/core";
+import { mcpLogger } from "@/utils/mcp-logger";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -73,14 +74,14 @@ export class McpService extends Service {
     try {
       const mcpSettings = this.getMcpSettings();
       if (!mcpSettings || !mcpSettings.servers) {
-        logger.info("No MCP servers configured.");
+        mcpLogger.info("No MCP servers configured.");
         return;
       }
       await this.updateServerConnections(mcpSettings.servers);
       const servers = this.getServers();
       this.mcpProvider = buildMcpProviderData(servers);
     } catch (error) {
-      logger.error(
+      mcpLogger.error(
         "Failed to initialize MCP servers:",
         error instanceof Error ? error.message : String(error)
       );
@@ -100,7 +101,7 @@ export class McpService extends Service {
     for (const name of currentNames) {
       if (!newNames.has(name)) {
         await this.deleteConnection(name);
-        logger.info(`Deleted MCP server: ${name}`);
+        mcpLogger.info(`Deleted MCP server: ${name}`);
       }
     }
 
@@ -110,7 +111,7 @@ export class McpService extends Service {
         try {
           await this.initializeConnection(name, config);
         } catch (error) {
-          logger.error(
+          mcpLogger.error(
             `Failed to connect to new MCP server ${name}:`,
             error instanceof Error ? error.message : String(error)
           );
@@ -119,9 +120,9 @@ export class McpService extends Service {
         try {
           await this.deleteConnection(name);
           await this.initializeConnection(name, config);
-          logger.info(`Reconnected MCP server with updated config: ${name}`);
+          mcpLogger.info(`Reconnected MCP server with updated config: ${name}`);
         } catch (error) {
-          logger.error(
+          mcpLogger.error(
             `Failed to reconnect MCP server ${name}:`,
             error instanceof Error ? error.message : String(error)
           );
@@ -170,7 +171,7 @@ export class McpService extends Service {
       state.reconnectAttempts = 0;
       state.consecutivePingFailures = 0;
       this.startPingMonitoring(name);
-      logger.info(`Successfully connected to MCP server: ${name}`);
+      mcpLogger.info(`Successfully connected to MCP server: ${name}`);
     } catch (error) {
       state.status = "disconnected";
       state.lastError = error instanceof Error ? error : new Error(String(error));
@@ -181,7 +182,7 @@ export class McpService extends Service {
 
   private setupTransportHandlers(name: string, connection: McpConnection, state: ConnectionState) {
     connection.transport.onerror = async (error) => {
-      logger.error(`Transport error for "${name}":`, error);
+      mcpLogger.error(`Transport error for "${name}":`, error);
       connection.server.status = "disconnected";
       this.appendErrorMessage(connection, error.message);
       this.handleDisconnection(name, error);
@@ -198,7 +199,7 @@ export class McpService extends Service {
     if (state.pingInterval) clearInterval(state.pingInterval);
     state.pingInterval = setInterval(() => {
       this.sendPing(name).catch((err) => {
-        logger.warn(`Ping failed for ${name}:`, err instanceof Error ? err.message : String(err));
+        mcpLogger.warn(`Ping failed for ${name}:`, err instanceof Error ? err.message : String(err));
         this.handlePingFailure(name, err);
       });
     }, this.pingConfig.intervalMs);
@@ -224,7 +225,7 @@ export class McpService extends Service {
     if (!state) return;
     state.consecutivePingFailures++;
     if (state.consecutivePingFailures >= this.pingConfig.failuresBeforeDisconnect) {
-      logger.warn(`Ping failures exceeded for ${name}, disconnecting and attempting reconnect.`);
+      mcpLogger.warn(`Ping failures exceeded for ${name}, disconnecting and attempting reconnect.`);
       this.handleDisconnection(name, error);
     }
   }
@@ -237,19 +238,19 @@ export class McpService extends Service {
     if (state.pingInterval) clearInterval(state.pingInterval);
     if (state.reconnectTimeout) clearTimeout(state.reconnectTimeout);
     if (state.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-      logger.error(`Max reconnect attempts reached for ${name}. Giving up.`);
+      mcpLogger.error(`Max reconnect attempts reached for ${name}. Giving up.`);
       return;
     }
     const delay = INITIAL_RETRY_DELAY * Math.pow(BACKOFF_MULTIPLIER, state.reconnectAttempts);
     state.reconnectTimeout = setTimeout(async () => {
       state.reconnectAttempts++;
-      logger.info(`Attempting to reconnect to ${name} (attempt ${state.reconnectAttempts})...`);
+      mcpLogger.info(`Attempting to reconnect to ${name} (attempt ${state.reconnectAttempts})...`);
       const config = this.connections.get(name)?.server.config;
       if (config) {
         try {
           await this.initializeConnection(name, JSON.parse(config));
         } catch (err) {
-          logger.error(
+          mcpLogger.error(
             `Reconnect attempt failed for ${name}:`,
             err instanceof Error ? err.message : String(err)
           );
@@ -266,7 +267,7 @@ export class McpService extends Service {
         await connection.transport.close();
         await connection.client.close();
       } catch (error) {
-        logger.error(
+        mcpLogger.error(
           `Failed to close transport for ${name}:`,
           error instanceof Error ? error.message : String(error)
         );
@@ -309,7 +310,7 @@ export class McpService extends Service {
 
     // Add deprecation warning for legacy "sse" type
     if (config.type === "sse") {
-      logger.warn(
+      mcpLogger.warn(
         `Server "${name}": "sse" transport type is deprecated. Use "streamable-http" or "http" instead for the modern Streamable HTTP transport.`
       );
     }
@@ -345,9 +346,9 @@ export class McpService extends Service {
             // Apply compatibility transformations automatically
             processedTool.inputSchema = this.applyToolCompatibility(tool.inputSchema);
 
-            logger.debug(`Applied tool compatibility for: ${tool.name} on server: ${serverName}`);
+            mcpLogger.debug(`Applied tool compatibility for: ${tool.name} on server: ${serverName}`);
           } catch (error) {
-            logger.warn(`Tool compatibility failed for ${tool.name} on ${serverName}:`, error);
+            mcpLogger.warn(`Tool compatibility failed for ${tool.name} on ${serverName}:`, error);
             // Keep original schema if transformation fails
           }
         }
@@ -355,14 +356,14 @@ export class McpService extends Service {
         return processedTool;
       });
 
-      logger.info(`Fetched ${tools.length} tools for ${serverName}`);
+      mcpLogger.info(`Fetched ${tools.length} tools for ${serverName}`);
       for (const tool of tools) {
-        logger.info(`[${serverName}] ${tool.name}: ${tool.description}`);
+        mcpLogger.info(`[${serverName}] ${tool.name}: ${tool.description}`);
       }
 
       return tools;
     } catch (error) {
-      logger.error(
+      mcpLogger.error(
         `Failed to fetch tools for ${serverName}:`,
         error instanceof Error ? error.message : String(error)
       );
@@ -380,7 +381,7 @@ export class McpService extends Service {
       const response = await connection.client.listResources();
       return response?.resources || [];
     } catch (error) {
-      logger.warn(
+      mcpLogger.warn(
         `No resources found for ${serverName}:`,
         error instanceof Error ? error.message : String(error)
       );
@@ -398,7 +399,7 @@ export class McpService extends Service {
       const response = await connection.client.listResourceTemplates();
       return response?.resourceTemplates || [];
     } catch (error) {
-      logger.warn(
+      mcpLogger.warn(
         `No resource templates found for ${serverName}:`,
         error instanceof Error ? error.message : String(error)
       );
@@ -433,7 +434,7 @@ export class McpService extends Service {
       const config = JSON.parse(connection.server.config);
       timeout = config.timeoutInMillis || DEFAULT_MCP_TIMEOUT_SECONDS;
     } catch (error) {
-      logger.error(
+      mcpLogger.error(
         `Failed to parse timeout configuration for server ${serverName}:`,
         error instanceof Error ? error.message : String(error)
       );
@@ -464,15 +465,15 @@ export class McpService extends Service {
     const connection = this.connections.get(serverName);
     const config = connection?.server.config;
     if (config) {
-      logger.info(`Restarting ${serverName} MCP server...`);
+      mcpLogger.info(`Restarting ${serverName} MCP server...`);
       connection.server.status = "connecting";
       connection.server.error = "";
       try {
         await this.deleteConnection(serverName);
         await this.initializeConnection(serverName, JSON.parse(config));
-        logger.info(`${serverName} MCP server connected`);
+        mcpLogger.info(`${serverName} MCP server connected`);
       } catch (error) {
-        logger.error(
+        mcpLogger.error(
           `Failed to restart connection for ${serverName}:`,
           error instanceof Error ? error.message : String(error)
         );
@@ -488,9 +489,9 @@ export class McpService extends Service {
     this.compatibilityInitialized = true;
 
     if (this.toolCompatibility) {
-      logger.info(`Tool compatibility enabled`);
+      mcpLogger.info(`Tool compatibility enabled`);
     } else {
-      logger.info(`No tool compatibility needed`);
+      mcpLogger.info(`No tool compatibility needed`);
     }
   }
 
@@ -506,7 +507,7 @@ export class McpService extends Service {
     try {
       return this.toolCompatibility.transformToolSchema(toolSchema);
     } catch (error) {
-      logger.warn(`Tool compatibility transformation failed:`, error);
+      mcpLogger.warn(`Tool compatibility transformation failed:`, error);
       return toolSchema; // Fall back to original schema
     }
   }

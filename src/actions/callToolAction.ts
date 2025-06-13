@@ -1,20 +1,22 @@
-import {
-  type Action,
-  type HandlerCallback,
-  type IAgentRuntime,
-  type Memory,
-  type State,
-  logger,
+import type {
+  Action,
+  HandlerCallback,
+  IAgentRuntime,
+  Memory,
+  State,
 } from "@elizaos/core";
-import type { McpService } from "../service";
-import { MCP_SERVICE_NAME } from "../types";
-import { handleMcpError } from "../utils/error";
-import { handleToolResponse, processToolResult } from "../utils/processing";
-import { createToolSelectionArgument, createToolSelectionName } from "../utils/selection";
-import { handleNoToolAvailable } from "../utils/handler";
+import { mcpLogger } from "@/utils/mcp-logger";
+import { handleMcpError } from "@/utils/error";
+import { handleToolResponse, processToolResult } from "@/utils/processing";
+import { createToolSelectionArgument, createToolSelectionName } from "@/utils/selection";
+import { useActionHandler } from "@/utils/use-action";
+import { validateAction } from "@/utils/validation";
+import { handleNoToolAvailable } from "@/utils/handlers";
+
+const ACTION_NAME = "CALL_TOOL";
 
 export const callToolAction: Action = {
-  name: "CALL_TOOL",
+  name: ACTION_NAME,
   similes: [
     "CALL_MCP_TOOL",
     "USE_TOOL",
@@ -28,101 +30,61 @@ export const callToolAction: Action = {
   ],
   description: "Calls a tool from an MCP server to perform a specific task",
 
-  validate: async (runtime: IAgentRuntime, _message: Memory, _state?: State): Promise<boolean> => {
-    const mcpService = runtime.getService<McpService>(MCP_SERVICE_NAME);
-    if (!mcpService) return false;
-
-    const servers = mcpService.getServers();
-    return (
-      servers.length > 0 &&
-      servers.some(
-        (server) => server.status === "connected" && server.tools && server.tools.length > 0
-      )
-    );
+  validate: async (runtime: IAgentRuntime, message: Memory, state?: State): Promise<boolean> => {
+    return await validateAction(ACTION_NAME, runtime, message, state);
   },
 
   handler: async (
     runtime: IAgentRuntime,
     message: Memory,
-    _state?: State,
-    _options?: { [key: string]: unknown },
+    state?: State,
+    options?: { [key: string]: unknown },
     callback?: HandlerCallback
   ): Promise<boolean> => {
-    const composedState = await runtime.composeState(message, ["RECENT_MESSAGES", "MCP"]);
-    const mcpService = runtime.getService<McpService>(MCP_SERVICE_NAME);
-    if (!mcpService) {
-      throw new Error("MCP service not available");
-    }
-    const mcpProvider = mcpService.getProviderData();
+    const context = await useActionHandler({ actionName: ACTION_NAME, runtime, message, state, options, callback });
 
     try {
       // Select the tool with this servername and toolname
-      const toolSelectionName = await createToolSelectionName({
-        runtime,
-        state: composedState,
-        message,
-        callback,
-        mcpProvider,
-      });
+      const toolSelectionName = await createToolSelectionName({...context});
       if (!toolSelectionName || toolSelectionName.noToolAvailable) {
-        logger.warn("[NO_TOOL_AVAILABLE] No appropriate tool available for the request");
+        mcpLogger.warn("[NO_TOOL_AVAILABLE] No appropriate tool available for the request");
         return handleNoToolAvailable(callback, toolSelectionName);
       }
       const { serverName, toolName, reasoning } = toolSelectionName;
-      logger.info(
-        `[CALLING] Calling tool "${serverName}/${toolName}" on server with reasoning: "${reasoning}"`
-      );
+      mcpLogger.info(`[CALLING] Calling tool "${serverName}/${toolName}" on server with reasoning: "${reasoning}"`);
 
-      // Create the tool selection "argument" based on the selected tool name
-      const toolSelectionArgument = await createToolSelectionArgument({
-        runtime,
-        state: composedState,
-        message,
-        callback,
-        mcpProvider,
-        toolSelectionName,
-      });
+      const toolSelectionArgument = await createToolSelectionArgument({ ...context, toolSelectionName });
       if (!toolSelectionArgument) {
-        logger.warn(
-          "[NO_TOOL_SELECTION_ARGUMENT] No appropriate tool selection argument available"
-        );
+        mcpLogger.warn("[NO_TOOL_SELECTION_ARGUMENT] No appropriate tool selection argument available");
         return handleNoToolAvailable(callback, toolSelectionName);
       }
-      logger.info(
-        `[SELECTED] Tool Selection result:\n${JSON.stringify(toolSelectionArgument, null, 2)}`
-      );
+      mcpLogger.info(`[SELECTED] Tool Selection result:\n${JSON.stringify(toolSelectionArgument, null, 2)}`);
 
-      const result = await mcpService.callTool(
-        serverName,
-        toolName,
-        toolSelectionArgument.toolArguments
-      );
+      const result = await context.mcpService.callTool(serverName, toolName, toolSelectionArgument.toolArguments);
+      mcpLogger.info(`[CALLED] Tool "${serverName}/${toolName}" result:\n"${JSON.stringify(result, null, 2)}"`);
 
-      const { toolOutput, hasAttachments, attachments } = processToolResult(
+      const { toolOutput, hasAttachments, attachments } = processToolResult({
+        ...context,
         result,
         serverName,
         toolName,
-        runtime,
-        message.entityId
-      );
+        messageEntityId: context.message.entityId,
+      });
 
-      await handleToolResponse(
-        runtime,
-        message,
+      mcpLogger.info('[HANDLE] Handling tool response...');
+      await handleToolResponse({
+        ...context,
         serverName,
         toolName,
-        toolSelectionArgument.toolArguments,
+        toolArguments: toolSelectionArgument.toolArguments,
         toolOutput,
         hasAttachments,
         attachments,
-        composedState,
-        mcpProvider,
-        callback
-      );
+      });
 
       return true;
     } catch (error) {
-      return handleMcpError(composedState, mcpProvider, error, runtime, message, "tool", callback);
+      return await handleMcpError({ ...context, type: 'tool', error });
     }
   },
 

@@ -1,67 +1,26 @@
-import {
-  type Action,
-  type HandlerCallback,
-  type IAgentRuntime,
-  type Memory,
-  ModelType,
-  type State,
-  composePromptFromState,
-  logger,
+import type {
+  Action,
+  HandlerCallback,
+  IAgentRuntime,
+  Memory,
+  State,
 } from "@elizaos/core";
-import type { McpService } from "../service";
-import { resourceSelectionTemplate } from "../templates/resourceSelectionTemplate";
-import { MCP_SERVICE_NAME } from "../types";
-import { handleMcpError } from "../utils/error";
+import { mcpLogger } from "@/utils/mcp-logger";
+import { handleMcpError } from "@/utils/error";
 import {
-  handleResourceAnalysis,
   processResourceResult,
   sendInitialResponse,
-} from "../utils/processing";
-import {
-  createResourceSelectionFeedbackPrompt,
-  validateResourceSelection,
-} from "../utils/validation";
-import type { ResourceSelection } from "../utils/validation";
-import { withModelRetry } from "../utils/wrapper";
+} from "@/utils/processing";
+import { useActionHandler } from "@/utils/use-action";
+import { createResourceSelection } from "@/utils/selection";
+import { handleNoResourceAvailable, handleResourceAnalysis } from "@/utils/handlers";
+import { validateAction } from "@/utils/validation";
 
-function createResourceSelectionPrompt(composedState: State, userMessage: string): string {
-  const mcpData = composedState.values.mcp || {};
-  const serverNames = Object.keys(mcpData);
 
-  let resourcesDescription = "";
-  for (const serverName of serverNames) {
-    const server = mcpData[serverName];
-    if (server.status !== "connected") continue;
-
-    const resourceUris = Object.keys(server.resources || {});
-    for (const uri of resourceUris) {
-      const resource = server.resources[uri];
-      resourcesDescription += `Resource: ${uri} (Server: ${serverName})\n`;
-      resourcesDescription += `Name: ${resource.name || "No name available"}\n`;
-      resourcesDescription += `Description: ${
-        resource.description || "No description available"
-      }\n`;
-      resourcesDescription += `MIME Type: ${resource.mimeType || "Not specified"}\n\n`;
-    }
-  }
-
-  const enhancedState: State = {
-    ...composedState,
-    values: {
-      ...composedState.values,
-      resourcesDescription,
-      userMessage,
-    },
-  };
-
-  return composePromptFromState({
-    state: enhancedState,
-    template: resourceSelectionTemplate,
-  });
-}
+const ACTION_NAME = 'READ_RESOURCE';
 
 export const readResourceAction: Action = {
-  name: "READ_RESOURCE",
+  name: ACTION_NAME,
   similes: [
     "READ_MCP_RESOURCE",
     "GET_RESOURCE",
@@ -73,107 +32,45 @@ export const readResourceAction: Action = {
   ],
   description: "Reads a resource from an MCP server",
 
-  validate: async (runtime: IAgentRuntime, _message: Memory, _state?: State): Promise<boolean> => {
-    const mcpService = runtime.getService<McpService>(MCP_SERVICE_NAME);
-    if (!mcpService) return false;
-
-    const servers = mcpService.getServers();
-    return (
-      servers.length > 0 &&
-      servers.some(
-        (server) => server.status === "connected" && server.resources && server.resources.length > 0
-      )
-    );
+  validate: async (runtime: IAgentRuntime, message: Memory, state?: State): Promise<boolean> => {
+    return await validateAction(ACTION_NAME, runtime, message, state);
   },
 
   handler: async (
     runtime: IAgentRuntime,
     message: Memory,
-    _state?: State,
-    _options?: { [key: string]: unknown },
+    state?: State,
+    options?: { [key: string]: unknown },
     callback?: HandlerCallback
   ): Promise<boolean> => {
-    const composedState = await runtime.composeState(message, ["RECENT_MESSAGES", "MCP"]);
-
-    const mcpService = runtime.getService<McpService>(MCP_SERVICE_NAME);
-    if (!mcpService) {
-      throw new Error("MCP service not available");
-    }
-
-    const mcpProvider = mcpService.getProviderData();
+    const context = await useActionHandler({ actionName: ACTION_NAME, runtime, message, state, options, callback });
 
     try {
+      mcpLogger.info('[INITIAL_RESPONSE] Sending initial response...');
       await sendInitialResponse(callback);
 
-      const resourceSelectionPrompt = createResourceSelectionPrompt(
-        composedState,
-        message.content.text || ""
-      );
+      const resourceSelection = await createResourceSelection({ ...context });
+      mcpLogger.info(`[SELECTED] Resource Selection response:\n${JSON.stringify(resourceSelection, null, 2)}`);
 
-      const resourceSelection = await runtime.useModel(ModelType.TEXT_SMALL, {
-        prompt: resourceSelectionPrompt,
-      });
-
-      const parsedSelection = await withModelRetry<ResourceSelection>({
-        runtime,
-        state: composedState,
-        message,
-        callback,
-        input: resourceSelection,
-        validationFn: (data) => validateResourceSelection(data),
-        createFeedbackPromptFn: (originalResponse, errorMessage, state, userMessage) =>
-          createResourceSelectionFeedbackPrompt(
-            originalResponse as string,
-            errorMessage,
-            state,
-            userMessage
-          ),
-        failureMsg: `I'm having trouble finding the resource you're looking for. Could you provide more details about what you need?`,
-        retryCount: 0,
-      });
-
-      if (!parsedSelection || parsedSelection.noResourceAvailable) {
-        if (callback && parsedSelection?.noResourceAvailable) {
-          await callback({
-            text: "I don't have a specific resource that contains the information you're looking for. Let me try to assist you directly instead.",
-            thought:
-              "No appropriate MCP resource available for this request. Falling back to direct assistance.",
-            actions: ["REPLY"],
-          });
-        }
-        return true;
+      if (!resourceSelection || resourceSelection.noResourceAvailable) {
+        mcpLogger.info('[NO_RESOURCE_AVAILABLE] No appropriate resource available for the request');
+        return handleNoResourceAvailable(callback);
       }
 
-      const { serverName, uri, reasoning } = parsedSelection;
+      const { serverName, uri, reasoning } = resourceSelection;
+      mcpLogger.info(`[FETCHING] Fetching resource "${serverName}/${uri}" with reasoning: "${reasoning}"`);
 
-      logger.debug(`Selected resource "${uri}" on server "${serverName}" because: ${reasoning}`);
-
-      const result = await mcpService.readResource(serverName, uri);
-      logger.debug(`Read resource ${uri} from server ${serverName}`);
-
+      const result = await context.mcpService.readResource(serverName, uri);
+      mcpLogger.info(`[FETCHED] Resource "${serverName}/${uri}" result: \n"${JSON.stringify(result, null, 2)}"`);
+      
       const { resourceContent, resourceMeta } = processResourceResult(result, uri);
 
-      await handleResourceAnalysis(
-        runtime,
-        message,
-        uri,
-        serverName,
-        resourceContent,
-        resourceMeta,
-        callback
-      );
+      mcpLogger.info('[HANDLE] Handling resource response...');
+      await handleResourceAnalysis({ ...context, serverName, uri, resourceContent, resourceMeta });
 
       return true;
     } catch (error) {
-      return handleMcpError(
-        composedState,
-        mcpProvider,
-        error,
-        runtime,
-        message,
-        "resource",
-        callback
-      );
+      return await handleMcpError({ ...context, error, type: 'resource' });
     }
   },
 

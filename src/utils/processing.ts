@@ -7,12 +7,13 @@ import {
   type Memory,
   ModelType,
   createUniqueUuid,
-  logger,
 } from '@elizaos/core';
+import { mcpLogger } from "./mcp-logger";
 import { type State, composePromptFromState } from '@elizaos/core';
-import { resourceAnalysisTemplate } from '../templates/resourceAnalysisTemplate';
-import { toolReasoningTemplate } from '../templates/toolReasoningTemplate';
+import { toolReasoningTemplate } from '@/templates/toolReasoningTemplate';
 import { createMcpMemory } from './mcp';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { McpProvider } from '@/types';
 
 function getMimeTypeToContentType(mimeType?: string): ContentType | undefined {
   if (!mimeType) return undefined;
@@ -55,26 +56,27 @@ export function processResourceResult(
   return { resourceContent, resourceMeta };
 }
 
-export function processToolResult(
-  result: {
-    content: Array<{
-      type: string;
-      text?: string;
-      mimeType?: string;
-      data?: string;
-      resource?: {
-        uri: string;
-        text?: string;
-        blob?: string;
-      };
-    }>;
-    isError?: boolean;
-  },
-  serverName: string,
-  toolName: string,
-  runtime: IAgentRuntime,
-  messageEntityId: string
-): { toolOutput: string; hasAttachments: boolean; attachments: Media[] } {
+interface ProcessToolResultOptions {
+  runtime: IAgentRuntime;
+  result: CallToolResult;
+  serverName: string;
+  toolName: string;
+  messageEntityId: string;
+}
+
+interface ProcessedToolResult {
+  toolOutput: string;
+  hasAttachments: boolean;
+  attachments: Media[];
+}
+
+export function processToolResult({
+  runtime,
+  result,
+  serverName,
+  toolName,
+  messageEntityId,
+}: ProcessToolResultOptions): ProcessedToolResult {
   let toolOutput = '';
   let hasAttachments = false;
   const attachments: Media[] = [];
@@ -106,60 +108,36 @@ export function processToolResult(
   return { toolOutput, hasAttachments, attachments };
 }
 
-export async function handleResourceAnalysis(
-  runtime: IAgentRuntime,
-  message: Memory,
-  uri: string,
-  serverName: string,
-  resourceContent: string,
-  resourceMeta: string,
-  callback?: HandlerCallback
-): Promise<void> {
-  await createMcpMemory(runtime, message, 'resource', serverName, resourceContent, {
-    uri,
-    isResourceAccess: true,
-  });
-
-  const analysisPrompt = createAnalysisPrompt(
-    uri,
-    message.content.text || '',
-    resourceContent,
-    resourceMeta
-  );
-
-  const analyzedResponse = await runtime.useModel(ModelType.TEXT_SMALL, {
-    prompt: analysisPrompt,
-  });
-
-  if (callback) {
-    await callback({
-      text: analyzedResponse,
-      thought: `I analyzed the content from the ${uri} resource on ${serverName} and crafted a thoughtful response that addresses the user's request while maintaining my conversational style.`,
-      actions: ['READ_MCP_RESOURCE'],
-    });
-  }
+interface HandleToolResponse {
+  runtime: IAgentRuntime;
+  state: State;
+  message: Memory;
+  serverName: string;
+  toolName: string;
+  toolArguments: Record<string, unknown>;
+  toolOutput: string;
+  hasAttachments: boolean;
+  attachments: Media[];
+  mcpProvider: McpProvider;
+  callback?: HandlerCallback;
 }
 
-export async function handleToolResponse(
-  runtime: IAgentRuntime,
-  message: Memory,
-  serverName: string,
-  toolName: string,
-  toolArgs: Record<string, unknown>,
-  toolOutput: string,
-  hasAttachments: boolean,
-  attachments: Media[],
-  state: State,
-  mcpProvider: {
-    values: { mcp: unknown };
-    data: { mcp: unknown };
-    text: string;
-  },
-  callback?: HandlerCallback
-): Promise<void> {
+export async function handleToolResponse({
+  runtime,
+  state,
+  message,
+  serverName,
+  toolName,
+  toolArguments,
+  toolOutput,
+  hasAttachments,
+  attachments,
+  mcpProvider,
+  callback,
+}: HandleToolResponse): Promise<void> {
   await createMcpMemory(runtime, message, 'tool', serverName, toolOutput, {
     toolName,
-    arguments: toolArgs,
+    arguments: toolArguments,
     isToolCall: true,
   });
 
@@ -173,7 +151,7 @@ export async function handleToolResponse(
     hasAttachments
   );
 
-  logger.info('reasoning prompt: ', reasoningPrompt);
+  mcpLogger.info('reasoning prompt: ', reasoningPrompt);
 
   const reasonedResponse = await runtime.useModel(ModelType.TEXT_SMALL, {
     prompt: reasoningPrompt,
@@ -216,28 +194,6 @@ export async function sendInitialResponse(callback?: HandlerCallback): Promise<v
   }
 }
 
-function createAnalysisPrompt(
-  uri: string,
-  userMessage: string,
-  resourceContent: string,
-  resourceMeta: string
-): string {
-  const enhancedState: State = {
-    data: {},
-    text: '',
-    values: {
-      uri,
-      userMessage,
-      resourceContent,
-      resourceMeta,
-    },
-  };
-
-  return composePromptFromState({
-    state: enhancedState,
-    template: resourceAnalysisTemplate,
-  });
-}
 
 function createReasoningPrompt(
   state: State,

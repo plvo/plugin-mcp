@@ -4,24 +4,34 @@ import {
   type Memory,
   ModelType,
   composePromptFromState,
-  logger,
 } from "@elizaos/core";
 import type { State } from "@elizaos/core";
-import { errorAnalysisPrompt } from "../templates/errorAnalysisPrompt";
-import type { McpProvider } from "../types";
+import { errorAnalysisPrompt } from "@/templates/errorAnalysisPrompt";
+import type { McpProvider } from "@/types";
+import { mcpLogger } from "./mcp-logger";
 
-export async function handleMcpError(
-  state: State,
-  mcpProvider: McpProvider,
-  error: unknown,
-  runtime: IAgentRuntime,
-  message: Memory,
-  type: "tool" | "resource",
-  callback?: HandlerCallback
-): Promise<boolean> {
+interface HandleMcpErrorOptions {
+  state: State;
+  mcpProvider: McpProvider;
+  error: unknown;
+  runtime: IAgentRuntime;
+  message: Memory;
+  type: 'tool' | 'resource';
+  callback?: HandlerCallback;
+}
+
+export async function handleMcpError({
+  state,
+  mcpProvider,
+  error,
+  runtime,
+  message,
+  type,
+  callback,
+}: HandleMcpErrorOptions): Promise<boolean> {
   const errorMessage = error instanceof Error ? error.message : String(error);
 
-  logger.error(`Error executing MCP ${type}: ${errorMessage}`, error);
+  mcpLogger.error(`Error executing MCP ${type}: ${errorMessage}`, error);
 
   if (callback) {
     const enhancedState: State = {
@@ -50,7 +60,7 @@ export async function handleMcpError(
         actions: ["REPLY"],
       });
     } catch (modelError) {
-      logger.error(
+      mcpLogger.error(
         "Failed to generate error response:",
         modelError instanceof Error ? modelError.message : String(modelError)
       );
